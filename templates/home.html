@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Detection App</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Image Analysis</h1>
+        <form id="username-form">
+            <input type="text" name="username" id="username" placeholder="Enter Instagram username" required>
+            <div class="button-group">
+                <button type="submit" id="detect-gender-btn">Detect Gender</button>
+                <button type="button" id="detect-race-btn">Detect Race</button>
+            </div>
+        </form>
+        <div id="loading-steps" style="display: none;">
+            <p id="step"></p>
+        </div>
+        <div id="result" style="display: none;">
+            <h2>Result</h2>
+            <p>Username: <span id="result-username"></span></p>
+            <p id="result-type"></p>
+            <p>Probability: <span id="result-probability"></span></p>
+            <img id="collage-image" src="" alt="Collage Image">
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
