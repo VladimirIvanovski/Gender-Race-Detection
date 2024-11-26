@@ -117,17 +117,17 @@ def detect_attribute_route(attribute):
     steps.append("Analyzing images...")
     if attribute == 'gender':
         labels = [
-            "Images of male people",
-            "Images of female people",
+            "Images of Male people",
+            "Images of Female people",
             "Images of objects"
         ]
     elif attribute == 'race':
         labels = [
-            "Images of White people",
-            "Images of Indian people",
-            "Images of Asian people",
-            "Images of Black people"
-            # "Images of Objects"
+            "White race",
+            "Indian race",
+            "Asian race",
+            "Black race",
+            "Objects"
         ]
     else:
         return jsonify({'error': 'Invalid attribute'}), 400
