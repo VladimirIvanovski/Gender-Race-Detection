@@ -101,7 +101,7 @@ def detect_race_route():
 
 def detect_attribute_route(attribute):
     data = request.get_json()
-    username = data.get('username')
+    username = str(data.get('username')).replace("@","").lower()
     if not username:
         return jsonify({'error': 'No username provided'}), 400
 
@@ -126,7 +126,8 @@ def detect_attribute_route(attribute):
             "Images of White people",
             "Images of Indian people",
             "Images of Asian people",
-            "Images of Objects"
+            "Images of Black people"
+            # "Images of Objects"
         ]
     else:
         return jsonify({'error': 'Invalid attribute'}), 400
@@ -142,8 +143,8 @@ def detect_attribute_route(attribute):
     collage.save(buffered, format="JPEG")
     collage_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-    if best_probability < 0.75:
-        detected_attribute = "Objects"
+    # if best_probability < 0.75:
+    #     detected_attribute = "Objects"
 
     return jsonify({
         'username': username,
@@ -152,5 +153,6 @@ def detect_attribute_route(attribute):
         'steps': steps,
         'collage_image': collage_base64
     })
+
 if __name__ == '__main__':
     app.run(debug=True)
