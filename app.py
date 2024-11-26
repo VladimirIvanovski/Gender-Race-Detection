@@ -118,16 +118,14 @@ def detect_attribute_route(attribute):
     if attribute == 'gender':
         labels = [
             "Images of Male people",
-            "Images of Female people",
-            "Images of objects"
+            "Images of Female people"
         ]
     elif attribute == 'race':
         labels = [
             "White race",
             "Indian race",
             "Asian race",
-            "Black race",
-            "Objects"
+            "Black race"
         ]
     else:
         return jsonify({'error': 'Invalid attribute'}), 400
@@ -137,14 +135,12 @@ def detect_attribute_route(attribute):
     best_label = result['best_label']
     best_probability = result['best_probability']
     detected_attribute = best_label.replace('Images of', '').strip()
+    if best_probability < 0.65:
+        detected_attribute = "Not sure, guessing " + detected_attribute
 
-    # Encode the collage image to base64
     buffered = BytesIO()
     collage.save(buffered, format="JPEG")
     collage_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-
-    # if best_probability < 0.75:
-    #     detected_attribute = "Objects"
 
     return jsonify({
         'username': username,
