@@ -5,14 +5,8 @@ from io import BytesIO
 from transformers import CLIPProcessor, CLIPModel
 import base64
 from concurrent.futures import ThreadPoolExecutor
-import time
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-import undetected_chromedriver as uc
-import chromedriver_autoinstaller
-from bs4 import BeautifulSoup
-
+from dotenv import load_dotenv
+import os
 
 app = Flask(__name__)
 
@@ -21,85 +15,43 @@ print("Launching the model...")
 model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
 processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
 print("Model launched.")
+load_dotenv()
+
+# Access environment variables
+PROXY_URL = os.getenv("PROXY_URL")
+INSTAGRAM_API = os.getenv("INSTAGRAM_API")
 
 def extract_image_urls(username):
-    # Ensure ChromeDriver is installed automatically
-    chromedriver_autoinstaller.install()
 
-    # Set up undetected Chrome options
-    options = uc.ChromeOptions()
-    # options.add_argument("--disable-gpu")
-    # options.add_argument("--window-size=1920,1080")
-    # options.add_argument("--disable-blink-features=AutomationControlled")
-    # options.add_argument(
-    #     "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-    # )
-
-    # If running in a headless environment (like on Railway), you might add:
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-
-    retry_count = 0
-    max_retries = 1  # Retry only once if no results are found
-
-    while retry_count <= max_retries:
-        driver = uc.Chrome(options=options)
+    proxies = {'https': PROXY_URL}
+    max_retries = 2
+    counter = 0
+    while counter < max_retries:
         try:
-            # Open the website
-            driver.get("https://gramsnap.com/en/inflact/")
-
-            # Wait until the search field is visible
-            search_field = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/header/div[1]/div/form/input"))
-            )
-
-            # Enter the username
-            search_field.send_keys(username)
-            time.sleep(2)
-
-            # Click the search button
-            search_button = driver.find_element(By.XPATH, "/html/body/div[1]/header/div[1]/div/form/button")
-            search_button.click()
-
-            time.sleep(5)
-            for _ in range(3):  # Scroll three times
-                driver.execute_script("window.scrollBy(0, window.innerHeight);")
-                time.sleep(1.5)  # Wait for the page to load new content
-
-            # Wait for results to load
-            time.sleep(5)
-
-            # Parse the page source with BeautifulSoup
-            soup = BeautifulSoup(driver.page_source, "html.parser")
-            img_links = []
+            image_links = []
             video_links = []
+            headers = {
+                "accept": "*/*",
+                "accept-language": "en-US,en;q=0.9",
+                "x-ig-app-id": "936619743392459",
+            }
+            response = requests.get(f"{INSTAGRAM_API}/?username={username}", proxies=proxies,headers=headers)
+            # Check if the request was successful
+            allData = response.json()['data']['user']
+            allPosts = allData['edge_owner_to_timeline_media']['edges']
 
-            # Find all <a> tags containing media
-            media_elements = soup.find_all("a", href=True)
-            for element in media_elements:
-                href = element["href"]
-                if href.endswith(".jpg"):
-                    img_links.append(href)
-                elif href.endswith(".mp4"):
-                    video_links.append(href)
+            for i in range(0, len(allPosts)):
+                if allPosts[i]['node']['is_video']:
+                    image_links.append(allPosts[i]['node']['display_url'])
+                    video_links.append(allPosts[i]['node']['video_url'])
+                else:
+                    image_links.append(allPosts[i]['node']['display_url'])
 
-            if img_links or video_links:
-                print(f"Found {len(img_links)} images and {len(video_links)} videos.")
-                return img_links
-            else:
-                print("No images or videos found. Retrying...")
-                retry_count += 1
-
+            return image_links
         except Exception as e:
-            print(f"An error occurred: {e}")
-            retry_count += 1
-        finally:
-            driver.quit()
-
-    # If no results were found after retries
-    print("No images or videos found after retrying.")
-    return {"images": [], "videos": []}
+            print("error",e)
+        counter+=1
+    return []
 
 
 def fetch_image(url):
