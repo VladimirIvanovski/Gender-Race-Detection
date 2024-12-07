@@ -1,0 +1,8 @@
+[build]
+command = """
+apt-get update &&
+apt-get install -y wget unzip fonts-liberation chromium
+"""
+
+[deploy]
+command = "python app.py"  # Replace 'app.py' with your script name

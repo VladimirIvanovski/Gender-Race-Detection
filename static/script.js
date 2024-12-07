@@ -91,7 +91,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Re-enable inputs
             usernameInput.disabled = false;
-            usernameInput.value = '';
+            // usernameInput.value = '';
             detectGenderButton.disabled = false;
             detectRaceButton.disabled = false;
         })
