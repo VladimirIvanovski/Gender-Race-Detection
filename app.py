@@ -36,18 +36,26 @@ def extract_image_urls(username):
                 "x-ig-app-id": "936619743392459",
             }
             response = requests.get(f"{INSTAGRAM_API}/?username={username}", proxies=proxies,headers=headers)
-            # Check if the request was successful
-            allData = response.json()['data']['user']
-            allPosts = allData['edge_owner_to_timeline_media']['edges']
 
-            for i in range(0, len(allPosts)):
-                if allPosts[i]['node']['is_video']:
-                    image_links.append(allPosts[i]['node']['display_url'])
-                    video_links.append(allPosts[i]['node']['video_url'])
-                else:
-                    image_links.append(allPosts[i]['node']['display_url'])
+            if response.status_code == 200:
 
-            return image_links
+                allData = response.json()['data']['user']
+                allPosts = allData['edge_owner_to_timeline_media']['edges']
+
+                for i in range(0, len(allPosts)):
+                    if allPosts[i]['node']['is_video']:
+                        image_links.append(allPosts[i]['node']['display_url'])
+                        video_links.append(allPosts[i]['node']['video_url'])
+                    else:
+                        image_links.append(allPosts[i]['node']['display_url'])
+
+                profile_photo_url = allData.get('profile_pic_url_hd', None)
+
+                # Print or store the profile photo URL
+                if profile_photo_url:
+                    image_links[0] = profile_photo_url
+
+                return image_links
         except Exception as e:
             print("error",e)
         counter+=1
@@ -68,7 +76,7 @@ def fetch_images_concurrently(image_urls):
         images = list(executor.map(fetch_image, image_urls))
     return images
 
-def create_collage(image_urls, grid_size=(3, 3), image_size=(500, 500), spacing=10):
+def create_collage(image_urls, grid_size=(3, 3), image_size=(300, 300), spacing=10):
     rows, cols = grid_size
     img_width, img_height = image_size
     collage_width = cols * img_width + (cols + 1) * spacing
