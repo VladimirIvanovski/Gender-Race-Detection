@@ -1,3 +1,8 @@
+import os
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+
 from flask import Flask, render_template, request, jsonify
 import requests
 from PIL import Image
