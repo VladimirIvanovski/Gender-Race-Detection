@@ -11,10 +11,10 @@ RUN apt-get update && \
 
 # Download and install ffmpeg
 RUN wget https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz && \
-    tar -xJf ffmpeg-release-amd64-static.tar.xz && \
-    mv ffmpeg-*/ffmpeg /usr/local/bin/ && \
-    mv ffmpeg-*/ffprobe /usr/local/bin/ && \
-    rm -rf ffmpeg-*
+    tar -xvf ffmpeg-release-amd64-static.tar.xz && \
+    mv ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ && \
+    mv ffmpeg-*-amd64-static/ffprobe /usr/local/bin/ && \
+    ffmpeg -version
 
 # Set the working directory in the container
 WORKDIR /app
