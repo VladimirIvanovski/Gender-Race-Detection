@@ -284,7 +284,7 @@ def process_reel(reel_url):
 
     return transcription
 
-def process_reels_with_limit(reel_urls, required_transcriptions=1):
+def process_reels_with_limit(reel_urls, required_transcriptions=2):
     """
     Process reels one by one until at least 'required_transcriptions' transcriptions are obtained.
     Combine transcriptions with newlines and return the result.
