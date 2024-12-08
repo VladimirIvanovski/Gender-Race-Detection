@@ -194,7 +194,7 @@ def transcribe_audio(wav_data):
         result = transcription_model.transcribe(audio=samples)
         return result["text"]
     except Exception as e:
-        # print(f"Error during transcription: {e}")
+        print(f"Error during transcription: {e}")
         return None
 
 
@@ -207,7 +207,7 @@ def process_reel(reel_url):
 
     transcription = transcribe_audio(wav_data)
     if not transcription:
-        # print(f"Skipping reel {reel_url}: Transcription failed.")
+        print(f"Skipping reel {reel_url}: Transcription failed.")
         return None
 
     return transcription
@@ -224,11 +224,11 @@ def process_reels_with_limit(reel_urls, required_transcriptions=2):
         transcription = process_reel(reel_url)
         if transcription:
             transcriptions.append(transcription)
-            # print(f"Transcription added. Total so far: {len(transcriptions)}")
+            print(f"Transcription added. Total so far: {len(transcriptions)}")
 
         # Stop processing if the required number of transcriptions is reached
         if len(transcriptions) >= required_transcriptions:
-            # print(f"Required transcriptions reached ({required_transcriptions}). Stopping.")
+            print(f"Required transcriptions reached ({required_transcriptions}). Stopping.")
             break
 
     # Combine all transcriptions with newlines
@@ -239,11 +239,14 @@ def process_reels_with_limit(reel_urls, required_transcriptions=2):
 def analyze_influencer_content(transcription):
     prompt = (
         "Analyze the following transcription to provide:\n"
-        "1. A concise and simple to understand summary (maximum 25 words).\n"
+        "1. A concise summary and simple to understand (maximum 25 words).\n"
         "2. Five relevant hashtags.\n"
         "3. Three relevant niches.\n\n"
         f"Transcription: {transcription}"
     )
+
+    if len(str(transcription).split(" ")) < 50:
+        return None,None,None
 
     completion = client.beta.chat.completions.parse(
         model="gpt-4o-mini",
@@ -252,7 +255,7 @@ def analyze_influencer_content(transcription):
             {"role": "user", "content": prompt}
         ],
         response_format=Analyzing,
-        max_tokens=600  # Adjust this value based on your needs
+        max_tokens=900  # Adjust this value based on your needs
     )
 
     response_message = completion.choices[0].message
