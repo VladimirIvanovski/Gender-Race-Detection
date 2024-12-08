@@ -1,59 +1,126 @@
 import os
 
+import torch
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 from flask import Flask, render_template, request, jsonify
 import requests
 from PIL import Image
-from transformers import CLIPProcessor, CLIPModel
+from pydantic import BaseModel
 import base64
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
-import os
 import whisper
 import warnings
-from openai import OpenAI
-from pydantic import BaseModel
-import subprocess
-from io import BytesIO
 from pydub import AudioSegment
 import numpy as np
+from io import BytesIO
+import subprocess
+import threading
+from transformers import CLIPProcessor, CLIPModel
+from openai import OpenAI
+
+# ----------------------- Singleton Classes -----------------------
+
+class CLIPModelSingleton:
+    _instance = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    print("Loading CLIPModel...")
+                    cls._instance = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
+                    print("CLIPModel loaded.")
+        return cls._instance
+
+class CLIPProcessorSingleton:
+    _instance = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    print("Loading CLIPProcessor...")
+                    cls._instance = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
+                    print("CLIPProcessor loaded.")
+        return cls._instance
+
+class WhisperModelSingleton:
+    _instance = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    print("Loading Whisper model...")
+                    cls._instance = whisper.load_model("tiny")
+                    print("Whisper model loaded.")
+        return cls._instance
+
+class OpenAIClientSingleton:
+    _instance = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls, api_key):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    print("Initializing OpenAI client...")
+                    cls._instance = OpenAI(api_key=api_key)
+                    print("OpenAI client initialized.")
+        return cls._instance
+
+# ----------------------- Flask Application -----------------------
 
 app = Flask(__name__)
 warnings.filterwarnings("ignore", message="FP16 is not supported on CPU; using FP32 instead")
 
-# Load the model at startup
-print("Launching the model...")
-model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
-processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
-transcription_model = whisper.load_model("tiny")
-print("Model launched.")
+# Load environment variables
 load_dotenv()
+
+# Initialize Singleton models
+clip_model = CLIPModelSingleton.get_instance()
+clip_processor = CLIPProcessorSingleton.get_instance()
+transcription_model = WhisperModelSingleton.get_instance()
+
+# Access environment variables
+PROXIES = os.getenv("PROXY_URL").split(",") if os.getenv("PROXY_URL") else []
+INSTAGRAM_API = os.getenv("INSTAGRAM_API")
+open_ai_key = os.getenv("OPENAI_KEY")
+
+if not open_ai_key:
+    raise ValueError("OPENAI_KEY environment variable is not set.")
+
+client = OpenAIClientSingleton.get_instance(api_key=open_ai_key)
 
 class Analyzing(BaseModel):
     summary: str
     hashtags: str
     niches: str
 
-# Access environment variables
-PROXIES = os.getenv("PROXY_URL").split(",") if os.getenv("PROXY_URL") else []
-INSTAGRAM_API = os.getenv("INSTAGRAM_API")
-open_ai_key = os.getenv("OPENAI_KEY")
-client = OpenAI(api_key=open_ai_key)
+# ----------------------- Helper Functions -----------------------
 
 def extract_image_urls(username):
-
     max_retries = 3
     counter = 0
     which_proxy = 0
     while counter < max_retries:
         try:
-            if which_proxy == 0:
-                which_proxy = 1
+            if PROXIES:
+                proxies = {'https': PROXIES[which_proxy % len(PROXIES)]}
+                which_proxy += 1
             else:
-                which_proxy = 0
-            proxies = {'https': PROXIES[which_proxy]}
+                proxies = {}
             image_links = []
             video_links = []
             headers = {
@@ -61,17 +128,17 @@ def extract_image_urls(username):
                 "accept-language": "en-US,en;q=0.9",
                 "x-ig-app-id": "936619743392459",
             }
-            response = requests.get(f"{INSTAGRAM_API}/?username={username}", proxies=proxies,headers=headers)
+            response = requests.get(f"{INSTAGRAM_API}/?username={username}", proxies=proxies, headers=headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                allData = response.json()['data']['user']
+                allData = data['data']['user']
                 allPosts = allData['edge_owner_to_timeline_media']['edges']
-                is_priv = data.get('data', {}).get('user',{}).get('is_private')
+                is_priv = allData.get('is_private', False)
                 if is_priv:
                     return [], True, []
 
                 reel_links = []
-                media = data["data"]["user"].get("edge_owner_to_timeline_media", {}).get("edges", [])
+                media = allPosts
                 for item in media:
                     node = item.get("node", {})
                     if node.get("__typename") == "GraphVideo":  # Videos, including reels
@@ -79,37 +146,37 @@ def extract_image_urls(username):
                         if shortcode:
                             reel_links.append(f"https://www.instagram.com/reel/{shortcode}/")
 
-                for i in range(0, len(allPosts)):
-                    if allPosts[i]['node']['is_video']:
-                        image_links.append(allPosts[i]['node']['display_url'])
-                        video_links.append(allPosts[i]['node']['video_url'])
+                for post in allPosts:
+                    node = post.get('node', {})
+                    if node.get('is_video'):
+                        image_links.append(node.get('display_url'))
+                        video_links.append(node.get('video_url'))
                     else:
-                        image_links.append(allPosts[i]['node']['display_url'])
+                        image_links.append(node.get('display_url'))
 
                 profile_photo_url = allData.get('profile_pic_url_hd', None)
 
-                # Print or store the profile photo URL
-                if profile_photo_url:
+                # Replace the first image with the profile photo if available
+                if profile_photo_url and image_links:
                     image_links[0] = profile_photo_url
 
                 return image_links[:9], False, reel_links
         except Exception as e:
-            print("error",e)
-        counter+=1
+            print(f"Error fetching images (Attempt {counter+1}/{max_retries}): {e}")
+        counter += 1
     return None, None, None
-
 
 def fetch_image(url):
     try:
-        response = requests.get(url,timeout=5)
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
-        return Image.open(BytesIO(response.content))
+        return Image.open(BytesIO(response.content)).convert("RGB")
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching the image: {e}")
+        print(f"Error fetching the image from {url}: {e}")
         return None
 
 def fetch_images_concurrently(image_urls):
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         images = list(executor.map(fetch_image, image_urls))
     return images
 
@@ -125,6 +192,8 @@ def create_collage(image_urls, grid_size=(3, 3), image_size=(300, 300), spacing=
     images = [img.resize(image_size) for img in images if img is not None]
 
     for idx, img in enumerate(images):
+        if idx >= rows * cols:
+            break  # Limit to grid size
         row, col = divmod(idx, cols)
         x = col * img_width + (col + 1) * spacing
         y = row * img_height + (row + 1) * spacing
@@ -132,13 +201,14 @@ def create_collage(image_urls, grid_size=(3, 3), image_size=(300, 300), spacing=
     return collage
 
 def classify_image(image, labels):
-    inputs = processor(
+    inputs = clip_processor(
         text=labels,
         images=image,
         return_tensors="pt",
         padding=True
     )
-    outputs = model(**inputs)
+    with torch.no_grad():
+        outputs = clip_model(**inputs)
     logits_per_image = outputs.logits_per_image
     probs = logits_per_image.softmax(dim=1)
     best_match_idx = probs.argmax().item()
@@ -149,7 +219,6 @@ def classify_image(image, labels):
         "best_probability": best_prob,
         "all_probabilities": {label: prob.item() for label, prob in zip(labels, probs[0])}
     }
-
 
 def extract_audio(reel_url):
     """Extract audio from a reel URL."""
@@ -176,25 +245,23 @@ def extract_audio(reel_url):
         wav_data, ff_err = ff_process.communicate()
 
         if ff_process.returncode != 0 or len(wav_data) == 0:
-            # print(f"FFmpeg error for URL {reel_url}: {ff_err.decode('utf-8', errors='ignore')}")
+            print(f"FFmpeg error for URL {reel_url}: {ff_err.decode('utf-8', errors='ignore')}")
             return None  # Return None if there's an error
 
         return wav_data
     except Exception as e:
-        # print(f"Error extracting audio for URL {reel_url}: {e}")
+        print(f"Error extracting audio for URL {reel_url}: {e}")
         return None
-
 
 def transcribe_audio(wav_data):
     """Transcribe audio data using Whisper."""
     try:
         audio_segment = AudioSegment.from_file(BytesIO(wav_data), format="wav")
         if len(audio_segment) == 0:
-            # print("Error: Extracted audio is empty.")
+            print("Error: Extracted audio is empty.")
             return None
 
         samples = np.array(audio_segment.get_array_of_samples()).astype(np.float32) / 32768.0
-        # print(f"Audio length: {len(audio_segment)} ms, Samples shape: {samples.shape}")
 
         result = transcription_model.transcribe(audio=samples)
         return result["text"]
@@ -202,12 +269,11 @@ def transcribe_audio(wav_data):
         print(f"Error during transcription: {e}")
         return None
 
-
 def process_reel(reel_url):
     """Process a single reel URL: extract audio and transcribe."""
     wav_data = extract_audio(reel_url)
     if not wav_data:
-        # print(f"Skipping reel {reel_url}: No audio data extracted.")
+        print(f"Skipping reel {reel_url}: No audio data extracted.")
         return None
 
     transcription = transcribe_audio(wav_data)
@@ -216,7 +282,6 @@ def process_reel(reel_url):
         return None
 
     return transcription
-
 
 def process_reels_with_limit(reel_urls, required_transcriptions=2):
     """
@@ -240,7 +305,6 @@ def process_reels_with_limit(reel_urls, required_transcriptions=2):
     combined_transcriptions = "\n".join(transcriptions)
     return combined_transcriptions
 
-
 def analyze_influencer_content(transcription):
     prompt = (
         "Analyze the following transcription to provide:\n"
@@ -251,32 +315,37 @@ def analyze_influencer_content(transcription):
     )
 
     if len(str(transcription).split(" ")) < 50:
-        return None,None,None
-
-    completion = client.beta.chat.completions.parse(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system","content": "You are an expert in analyzing text from Influencers or Creators"},
-            {"role": "user", "content": prompt}
-        ],
-        response_format=Analyzing,
-        max_tokens=900  # Adjust this value based on your needs
-    )
-
-    response_message = completion.choices[0].message
-
-    # Check if the model refused to respond
-    if response_message.refusal:
-        print(response_message.refusal)
+        print("Transcription is too short for analysis.")
         return None, None, None
-    else:
-        parsed_response = response_message.parsed
-        summary = parsed_response.summary
-        hashtags = parsed_response.hashtags  # Convert list to comma-separated string
-        niches = parsed_response.niches     # Convert list to comma-separated string
-        return summary, hashtags, niches
 
+    try:
+        completion = client.beta.chat.completions.parse(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert in analyzing text from Influencers or Creators"},
+                {"role": "user", "content": prompt}
+            ],
+            response_format=Analyzing,
+            max_tokens=900  # Adjust this value based on your needs
+        )
 
+        response_message = completion.choices[0].message
+
+        # Check if the model refused to respond
+        if response_message.refusal:
+            print(f"Model refusal: {response_message.refusal}")
+            return None, None, None
+        else:
+            parsed_response = response_message.parsed
+            summary = parsed_response.summary
+            hashtags = parsed_response.hashtags  # Convert list to comma-separated string
+            niches = parsed_response.niches     # Convert list to comma-separated string
+            return summary, hashtags, niches
+    except Exception as e:
+        print(f"Error during content analysis: {e}")
+        return None, None, None
+
+# ----------------------- Flask Routes -----------------------
 
 @app.route('/')
 def home():
@@ -297,13 +366,11 @@ def analyze_video_content():
     if not username:
         return jsonify({'error': 'No username provided'}), 400
 
-    steps = []
-    steps.append("Fetching images...")
-
+    print(f"Analyzing video content for username: {username}")
     image_urls, is_private, reels = extract_image_urls(username)
 
     if is_private:
-        return jsonify({"error": "Profile is private or unavailable"})
+        return jsonify({"error": "Profile is private or unavailable"}), 403
 
     if not image_urls:
         return jsonify({'error': 'No images found for this user'}), 404
@@ -331,21 +398,17 @@ def detect_attribute_route(attribute):
     if not username:
         return jsonify({'error': 'No username provided'}), 400
 
-    steps = []
-    steps.append("Fetching images...")
-
+    print(f"Detecting {attribute} for username: {username}")
     image_urls, is_private, reels = extract_image_urls(username)
 
     if is_private:
-        return jsonify({"error": "Profile is private or unavailable"})
+        return jsonify({"error": "Profile is private or unavailable"}), 403
 
     if not image_urls:
         return jsonify({'error': 'No images found for this user'}), 404
 
-    steps.append("Creating collage...")
     collage = create_collage(image_urls, grid_size=(3, 3), image_size=(500, 500), spacing=15)
 
-    steps.append("Analyzing images...")
     if attribute == 'gender':
         labels = [
             "Images of Male people",
@@ -362,13 +425,13 @@ def detect_attribute_route(attribute):
         return jsonify({'error': 'Invalid attribute'}), 400
 
     result = classify_image(collage, labels)
-    steps.append("Processing complete.")
     best_label = result['best_label']
     best_probability = result['best_probability']
     detected_attribute = best_label.replace('Images of', '').strip()
     if best_probability < 0.65:
         detected_attribute = "Not sure, guessing " + detected_attribute
 
+    # Convert collage image to base64
     buffered = BytesIO()
     collage.save(buffered, format="JPEG")
     collage_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
@@ -377,9 +440,12 @@ def detect_attribute_route(attribute):
         'username': username,
         'result': detected_attribute,
         'probability': best_probability,
-        'steps': steps,
         'collage_image': collage_base64
     })
 
+# ----------------------- Main Entry Point -----------------------
+
 if __name__ == '__main__':
+    # Ensure that the Flask app runs with a production-ready server in a real deployment.
+    # The built-in Flask server is not suitable for production.
     app.run(debug=True)
