@@ -1,19 +1,23 @@
 body {
-    background-color: #0d0d0d;
+    background: linear-gradient(120deg, #1e1e2f, #2a2a42);
     color: #fff;
     font-family: 'Arial', sans-serif;
     text-align: center;
-    padding-top: 50px;
+    padding: 50px 20px;
 }
 
 .container {
     max-width: 500px;
     margin: 0 auto;
+    border-radius: 15px;
+    padding: 20px;
+    background-color: rgba(255, 255, 255, 0.05);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
 }
 
 h1 {
-    font-size: 3em;
-    margin-bottom: 30px;
+    font-size: 2.5em;
+    margin-bottom: 20px;
     color: #00ff99;
 }
 
@@ -22,48 +26,61 @@ form {
 }
 
 input[type="text"] {
-    width: 80%;
-    padding: 15px;
+    width: 60%; /* Reduced from 100% */
+    padding: 10px;
     font-size: 1em;
-    border: none;
+    border: 2px solid #00ff99;
     border-radius: 25px;
     margin-bottom: 20px;
     outline: none;
+    background: transparent;
+    color: #fff;
+    transition: all 0.3s ease;
+    text-align: center; /* Center the text for a compact look */
 }
 
+input[type="text"]:focus {
+    border-color: #00cc7a;
+}
 button {
-    padding: 15px 30px;
+    padding: 15px 20px;
     font-size: 1em;
     border: none;
     border-radius: 25px;
-    background-color: #00ff99;
+    background: linear-gradient(120deg, #00ff99, #00cc7a);
     color: #0d0d0d;
     cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 10px rgba(0, 255, 153, 0.4);
 }
 
 button:hover {
-    background-color: #00cc7a;
+    transform: scale(1.05);
+    box-shadow: 0 6px 15px rgba(0, 255, 153, 0.6);
 }
 
 #loading-steps {
     font-size: 1.5em;
+    animation: fadeIn 1s ease-in-out;
 }
 
 #result {
     font-size: 1.2em;
+    animation: fadeIn 1s ease-in-out;
 }
 
 #collage-image {
     margin-top: 20px;
     max-width: 100%;
     border-radius: 15px;
-}
-.button-group {
-    display: flex;
-    justify-content: center;
-    gap: 20px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
 }
 
-.button-group button {
-    flex: 1;
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
 }

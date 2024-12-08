@@ -1,4 +1,4 @@
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     const form = document.getElementById('username-form');
     const usernameInput = document.getElementById('username');
     const loadingSteps = document.getElementById('loading-steps');
@@ -10,99 +10,77 @@ document.addEventListener('DOMContentLoaded', function() {
     const collageImage = document.getElementById('collage-image');
     const detectGenderButton = document.getElementById('detect-gender-btn');
     const detectRaceButton = document.getElementById('detect-race-btn');
+    const analyzeVideoButton = document.getElementById('analyze-video-btn');
 
     let detectionType = 'gender'; // Default detection type
 
-    detectGenderButton.addEventListener('click', function(e) {
+    detectGenderButton.addEventListener('click', () => {
         detectionType = 'gender';
     });
 
-    detectRaceButton.addEventListener('click', function(e) {
+    detectRaceButton.addEventListener('click', () => {
         detectionType = 'race';
-        // Manually submit the form
         form.dispatchEvent(new Event('submit'));
     });
 
-    form.addEventListener('submit', function(e) {
+    analyzeVideoButton.addEventListener('click', () => {
+        alert("Analyze Video Content feature coming soon!");
+    });
+
+    form.addEventListener('submit', function (e) {
         e.preventDefault();
         const username = usernameInput.value.trim();
-        if (username === '') {
+        if (!username) {
             alert('Please enter a username');
             return;
         }
 
-        // Disable inputs during processing
         usernameInput.disabled = true;
         detectGenderButton.disabled = true;
         detectRaceButton.disabled = true;
 
-        // Hide previous results and show loading steps
         resultDiv.style.display = 'none';
         loadingSteps.style.display = 'block';
 
         const steps = [
-            "Fetching images...",
-            "Creating collage...",
-            "Analyzing images..."
+            "Fetching data...",
+            "Analyzing images...",
+            "Finalizing results...",
         ];
+
         let currentStep = 0;
         stepText.textContent = steps[currentStep];
 
-        const interval = setInterval(function() {
+        const interval = setInterval(() => {
             currentStep++;
             if (currentStep < steps.length) {
                 stepText.textContent = steps[currentStep];
-            } else {
-                // Keep "Analyzing images..." displayed
-                currentStep = steps.length - 1;
             }
-        }, 2000); // Update every 2 seconds
+        }, 2000);
 
-        let endpoint = detectionType === 'gender' ? '/detect_gender' : '/detect_race';
-
-        fetch(endpoint, {
+        fetch(`/detect_${detectionType}`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ 'username': username })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username }),
         })
-        .then(response => response.json())
-        .then(data => {
-            clearInterval(interval);
-            if (data.error) {
-                stepText.textContent = data.error;
-                // Re-enable inputs
+            .then((response) => response.json())
+            .then((data) => {
+                clearInterval(interval);
+                loadingSteps.style.display = 'none';
+                resultDiv.style.display = 'block';
+                resultUsername.textContent = data.username || 'N/A';
+                resultType.textContent = `${detectionType.toUpperCase()}: ${data.result || 'N/A'}`;
+                resultProbability.textContent = `${(data.probability * 100).toFixed(2) || 'N/A'}%`;
+                collageImage.src = data.collage_image ? `data:image/jpeg;base64,${data.collage_image}` : '';
+            })
+            .catch((err) => {
+                clearInterval(interval);
+                stepText.textContent = 'An error occurred.';
+            })
+            .finally(() => {
                 usernameInput.disabled = false;
                 detectGenderButton.disabled = false;
                 detectRaceButton.disabled = false;
-                return;
-            }
-
-            // Display the result
-            loadingSteps.style.display = 'none';
-            resultDiv.style.display = 'block';
-            resultUsername.textContent = data.username;
-            resultType.textContent = detectionType === 'gender' ? `Gender: ${data.result}` : `Race: ${data.result}`;
-            resultProbability.textContent = (data.probability * 100).toFixed(2) + '%';
-
-            // Set the collage image source using data URL
-            collageImage.src = 'data:image/jpeg;base64,' + data.collage_image;
-
-            // Re-enable inputs
-            usernameInput.disabled = false;
-            // usernameInput.value = '';
-            detectGenderButton.disabled = false;
-            detectRaceButton.disabled = false;
-        })
-        .catch(error => {
-            clearInterval(interval);
-            console.error('Error:', error);
-            stepText.textContent = 'An error occurred during processing.';
-            // Re-enable inputs
-            usernameInput.disabled = false;
-            detectGenderButton.disabled = false;
-            detectRaceButton.disabled = false;
-        });
+            });
     });
 });
