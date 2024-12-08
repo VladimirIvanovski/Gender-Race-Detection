@@ -7,7 +7,7 @@ body {
 }
 
 .container {
-    max-width: 500px;
+    max-width: 600px;
     margin: 0 auto;
     border-radius: 15px;
     padding: 20px;
@@ -26,7 +26,7 @@ form {
 }
 
 input[type="text"] {
-    width: 60%; /* Reduced from 100% */
+    width: 60%;
     padding: 10px;
     font-size: 1em;
     border: 2px solid #00ff99;
@@ -36,14 +36,21 @@ input[type="text"] {
     background: transparent;
     color: #fff;
     transition: all 0.3s ease;
-    text-align: center; /* Center the text for a compact look */
+    text-align: center;
 }
 
 input[type="text"]:focus {
     border-color: #00cc7a;
 }
+
+.button-group {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+}
+
 button {
-    padding: 15px 20px;
+    padding: 10px 15px;
     font-size: 1em;
     border: none;
     border-radius: 25px;
@@ -69,7 +76,8 @@ button:hover {
     animation: fadeIn 1s ease-in-out;
 }
 
-#collage-image {
+#collage-image,
+#video-collage-image {
     margin-top: 20px;
     max-width: 100%;
     border-radius: 15px;

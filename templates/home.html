@@ -12,7 +12,7 @@
         <form id="username-form">
             <input type="text" name="username" id="username" placeholder="Enter Instagram username" required>
             <div class="button-group">
-                <button type="submit" id="detect-gender-btn">Detect Gender</button>
+                <button type="button" id="detect-gender-btn">Detect Gender</button>
                 <button type="button" id="detect-race-btn">Detect Race</button>
                 <button type="button" id="analyze-video-btn">Analyze Video Content</button>
             </div>
@@ -23,9 +23,26 @@
         <div id="result" style="display: none;">
             <h2>Result</h2>
             <p>Username: <span id="result-username"></span></p>
-            <p id="result-type"></p>
-            <p>Probability: <span id="result-probability"></span></p>
-            <img id="collage-image" src="" alt="Collage Image">
+
+            <!-- Gender/Race Detection Result -->
+            <div id="attribute-result">
+                <p id="result-type"></p>
+                <p id="result-probability-container">
+                    Probability: <span id="result-probability"></span>
+                </p>
+            </div>
+
+            <!-- Video Analysis Section -->
+            <div id="video-analysis" style="display: none;">
+                <h3>Video Content Analysis</h3>
+                <p><strong>Summary:</strong> <span id="video-summary"></span></p>
+                <p><strong>Hashtags:</strong> <span id="video-hashtags"></span></p>
+                <p><strong>Niches:</strong> <span id="video-niches"></span></p>
+            </div>
+
+            <!-- Collage Images -->
+            <img id="collage-image" src="" alt="Collage Image" style="display: none;">
+            <img id="video-collage-image" src="" alt="Video Collage" style="display: none;">
         </div>
     </div>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
