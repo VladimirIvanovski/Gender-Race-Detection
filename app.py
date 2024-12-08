@@ -1,4 +1,6 @@
 import os
+import time
+
 import torch
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -360,6 +362,9 @@ def detect_race_route():
 
 @app.route('/detect_analyze_video', methods=['POST'])
 def analyze_video_content():
+
+    now = time.time()
+
     data = request.get_json()
     username = str(data.get('username')).replace("@","").lower()
     if not username:
@@ -382,6 +387,8 @@ def analyze_video_content():
     buffered = BytesIO()
     collage.save(buffered, format="JPEG")
     collage_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+    print(time.time() - now)
 
     return jsonify({
         'username': username,

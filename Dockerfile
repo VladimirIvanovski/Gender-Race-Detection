@@ -33,4 +33,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 8000
 
 # Define the default command to run the application
-CMD ["gunicorn", "app:app", "--workers=2", "--threads=4", "--bind=0.0.0.0:8000"]
+CMD ["gunicorn", "app:app", "--workers=2", "--threads=4", "--bind=0.0.0.0:8000", "--timeout=100"]
