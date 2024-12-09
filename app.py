@@ -1,27 +1,28 @@
+import asyncio
 import os
 import time
+from typing import Optional, List, Any
 
 import torch
-
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-
-from flask import Flask, render_template, request, jsonify
-import requests
-from PIL import Image
-from pydantic import BaseModel
-import base64
-from concurrent.futures import ThreadPoolExecutor
-from dotenv import load_dotenv
-import whisper
-import warnings
-from pydub import AudioSegment
-import numpy as np
-from io import BytesIO
 import subprocess
 import threading
+import warnings
+import base64
+import requests
+import io
+import numpy as np
+from io import BytesIO
+from flask import Flask, render_template, request, jsonify
+from PIL import Image
+from pydantic import BaseModel
+from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
 from transformers import CLIPProcessor, CLIPModel
 from openai import OpenAI
+from faster_whisper import WhisperModel  # Ensure this is installed: pip install faster-whisper
+import soundfile as sf
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # ----------------------- Singleton Classes -----------------------
 
@@ -53,18 +54,18 @@ class CLIPProcessorSingleton:
                     print("CLIPProcessor loaded.")
         return cls._instance
 
-class WhisperModelSingleton:
+class FasterWhisperSingleton:
     _instance = None
     _lock = threading.Lock()
 
     @classmethod
-    def get_instance(cls):
+    def get_instance(cls, model_size="tiny", device="cpu", compute_type="int8"):
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
-                    print("Loading Whisper model...")
-                    cls._instance = whisper.load_model("tiny")
-                    print("Whisper model loaded.")
+                    print(f"Loading Faster-Whisper model '{model_size}' on device '{device}' with compute type '{compute_type}'...")
+                    cls._instance = WhisperModel(model_size, device=device, compute_type=compute_type)
+                    print("Faster-Whisper model loaded.")
         return cls._instance
 
 class OpenAIClientSingleton:
@@ -90,10 +91,10 @@ warnings.filterwarnings("ignore", message="FP16 is not supported on CPU; using F
 load_dotenv()
 
 # Initialize Singleton models
-clip_model = CLIPModelSingleton.get_instance()
-clip_processor = CLIPProcessorSingleton.get_instance()
-transcription_model = WhisperModelSingleton.get_instance()
+clip_model = None
+clip_processor = None
 
+trans_model = FasterWhisperSingleton.get_instance(model_size="tiny", device="cpu", compute_type="int8")
 # Access environment variables
 PROXIES = os.getenv("PROXY_URL").split(",") if os.getenv("PROXY_URL") else []
 INSTAGRAM_API = os.getenv("INSTAGRAM_API")
@@ -117,11 +118,11 @@ def extract_image_urls(username):
     which_proxy = 0
     while counter < max_retries:
         try:
-            if PROXIES:
-                proxies = {'https': PROXIES[which_proxy % len(PROXIES)]}
-                which_proxy += 1
+            if which_proxy == 0:
+                which_proxy = 1
             else:
-                proxies = {}
+                which_proxy = 0
+            proxies = {'https': PROXIES[which_proxy]}
             image_links = []
             video_links = []
             headers = {
@@ -161,7 +162,7 @@ def extract_image_urls(username):
                 if profile_photo_url and image_links:
                     image_links[0] = profile_photo_url
 
-                return image_links[:9], False, reel_links[:5]
+                return image_links[:9], False, reel_links[:8]
         except Exception as e:
             print(f"Error fetching images (Attempt {counter+1}/{max_retries}): {e}")
         counter += 1
@@ -221,95 +222,191 @@ def classify_image(image, labels):
         "all_probabilities": {label: prob.item() for label, prob in zip(labels, probs[0])}
     }
 
-def extract_audio(reel_url):
-    """Extract audio from a reel URL."""
+def extract_audio_sync(reel_url: str, proxy: str = None) -> Optional[bytes]:
+    """
+    Synchronously extract audio from a reel URL using yt-dlp and FFmpeg.
+
+    Args:
+        reel_url (str): The URL of the Instagram reel.
+        proxy (Optional[str]): Proxy URL if required.
+
+    Returns:
+        Optional[bytes]: The extracted WAV audio data or None if extraction failed.
+    """
     try:
+        yt_dlp_command = ["yt-dlp", "-f", "bestaudio", "-o", "-"]
+        if proxy:
+            yt_dlp_command.extend(["--proxy", proxy])
+        yt_dlp_command.append(reel_url)
+
+        ffmpeg_command = [
+            "ffmpeg",
+            "-i", "pipe:0",
+            "-f", "wav",
+            "-ar", "16000",
+            "-ac", "1",
+            "-acodec", "pcm_s16le",
+            "-loglevel", "quiet",
+            "-"
+        ]
+
+        # Start yt-dlp process
         yt_process = subprocess.Popen(
-            ["yt-dlp", "-f", "bestaudio", "-o", "-", reel_url],
+            yt_dlp_command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
+
+        # Start FFmpeg process
         ff_process = subprocess.Popen(
-            [
-                "ffmpeg", "-i", "pipe:0",
-                "-f", "wav",
-                "-ar", "16000",  # Set sample rate to 16kHz
-                "-ac", "1",      # Mono
-                "-acodec", "pcm_s16le",
-                "-"
-            ],
+            ffmpeg_command,
             stdin=yt_process.stdout,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
+
+        # Close yt_process stdout in the parent to allow FFmpeg to receive EOF
         yt_process.stdout.close()
+
+        # Get FFmpeg output
         wav_data, ff_err = ff_process.communicate()
 
-        if ff_process.returncode != 0 or len(wav_data) == 0:
-            print(f"FFmpeg error for URL {reel_url}: {ff_err.decode('utf-8', errors='ignore')}")
-            return None  # Return None if there's an error
+        # Get yt-dlp stderr
+        yt_stdout, yt_err = yt_process.communicate()
 
-        return wav_data
-    except Exception as e:
-        print(f"Error extracting audio for URL {reel_url}: {e}")
-        return None
-
-def transcribe_audio(wav_data):
-    """Transcribe audio data using Whisper."""
-    try:
-        audio_segment = AudioSegment.from_file(BytesIO(wav_data), format="wav")
-        if len(audio_segment) == 0:
-            print("Error: Extracted audio is empty.")
+        # Check yt-dlp's return code
+        if yt_process.returncode != 0:
+            print(f"yt-dlp failed for {reel_url}. Error: {yt_err.decode('utf-8').strip()}")
             return None
 
-        samples = np.array(audio_segment.get_array_of_samples()).astype(np.float32) / 32768.0
+        # Check FFmpeg's return code and wav_data
+        if ff_process.returncode != 0 or not wav_data:
+            print(f"FFmpeg failed for {reel_url}. FFmpeg stderr: {ff_err.decode('utf-8').strip()}")
+            return None
 
-        result = transcription_model.transcribe(audio=samples)
-        return result["text"]
+        return wav_data
+
     except Exception as e:
-        print(f"Error during transcription: {e}")
+        print(f"Unexpected error during audio extraction for {reel_url}: {e}")
         return None
 
-def process_reel(reel_url):
-    """Process a single reel URL: extract audio and transcribe."""
-    wav_data = extract_audio(reel_url)
-    if not wav_data:
-        print(f"Skipping reel {reel_url}: No audio data extracted.")
-        return None
-
-    transcription = transcribe_audio(wav_data)
-    if not transcription:
-        print(f"Skipping reel {reel_url}: Transcription failed.")
-        return None
-
-    return transcription
-
-def process_reels_with_limit(reel_urls, required_transcriptions=1):
+async def extract_audio_async(reel_url: str, proxy: str = None) -> Optional[bytes]:
     """
-    Process reels one by one until at least 'required_transcriptions' transcriptions are obtained.
-    Combine transcriptions with newlines and return the result.
+    Asynchronously extract audio by running the synchronous extraction in a thread.
+
+    Args:
+        reel_url (str): The URL of the Instagram reel.
+        proxy (Optional[str]): Proxy URL if required.
+
+    Returns:
+        Optional[bytes]: The extracted WAV audio data or None if extraction failed.
     """
+    return await asyncio.to_thread(extract_audio_sync, reel_url, proxy)
+
+async def extract_audio_from_reels(reel_urls: List[str], proxy: Optional[str] = None) -> tuple[Any]:
+    """
+    Extract audio from multiple reel URLs asynchronously using threads.
+
+    Args:
+        reel_urls (List[str]): A list of Instagram reel URLs.
+        proxy (Optional[str]): Proxy URL if required.
+
+    Returns:
+        List[Optional[bytes]]: A list containing WAV audio data or None for each URL.
+    """
+    tasks = [extract_audio_async(url, proxy) for url in reel_urls]
+    results = await asyncio.gather(*tasks, return_exceptions=False)
+    return results
+
+
+def transcribe_in_memory_wav(reels, required_transcriptions=3, language=None):
+    """
+    Transcribes multiple in-memory WAV data using Faster Whisper until the required number of transcriptions is obtained.
+
+    Parameters:
+    - reels (List[bytes]): A list of WAV audio data as bytes.
+    - required_transcriptions (int): The number of successful transcriptions to obtain.
+    - language (str, optional): The language of the audio. If known, specify to speed up transcription.
+
+    Returns:
+    - Optional[str]: The combined transcribed text separated by newlines if at least `required_transcriptions` are obtained.
+                      Returns the combined transcriptions available if fewer are successful.
+                      Returns None if no transcriptions are successful.
+    """
+    global trans_model
     transcriptions = []
-    for reel_url in reel_urls:
-        print(f"Processing reel: {reel_url}")
-        transcription = process_reel(reel_url)
-        if transcription:
-            transcriptions.append(transcription)
-            print(f"Transcription added. Total so far: {len(transcriptions)}")
 
-        # Stop processing if the required number of transcriptions is reached
-        if len(transcriptions) >= required_transcriptions:
-            print(f"Required transcriptions reached ({required_transcriptions}). Stopping.")
-            break
+    # Initialize Faster-Whisper model (Singleton)
+    trans_model = FasterWhisperSingleton.get_instance(model_size="tiny", device="cpu", compute_type="int8")
+    idx = 0
+    # print(reels)
+    for wav_data in reels:
+        try:
+            if not wav_data or len(wav_data) == 0:
+                print(f"Reel {idx}: Received empty audio data for transcription. Skipping.")
+                continue
 
-    # Combine all transcriptions with newlines
-    combined_transcriptions = "\n".join(transcriptions)
-    return combined_transcriptions
+            # Load audio from in-memory bytes
+            with io.BytesIO(wav_data) as audio_buffer:
+                speech, sample_rate = sf.read(audio_buffer)
+
+            # Ensure correct sampling rate
+            if sample_rate != 16000:
+                print(f"Reel {idx}: Resampling audio from {sample_rate} Hz to 16000 Hz.")
+                # Resample using torchaudio if sample rate is incorrect
+                import torch
+                import torchaudio.transforms as T
+
+                resampler = T.Resample(orig_freq=sample_rate, new_freq=16000)
+                speech_tensor = torch.tensor(speech).float()
+                speech_resampled = resampler(speech_tensor).numpy()
+                speech = speech_resampled
+                sample_rate = 16000  # Update sample rate after resampling
+
+            # Perform transcription
+            segments, info = trans_model.transcribe(
+                speech,
+                beam_size=1,  # Greedy decoding for speed
+                language=language,  # Specify if known, e.g., "en" for English
+                word_timestamps=False,  # Disable word-level timestamps
+                best_of=1,  # Keep only the best hypothesis
+                without_timestamps=True  # Return only text
+            )
+
+            # Combine all segments into a single transcription
+            transcription = " ".join([segment.text for segment in segments]).strip()
+            if transcription:
+                transcriptions.append(transcription)
+                print(f"Reel {idx}: Transcription obtained.")
+            else:
+                print(f"Reel {idx}: Empty transcription received.")
+
+            # Check if required number of transcriptions is reached
+            if len(transcriptions) >= required_transcriptions:
+                print(f"Required transcriptions ({required_transcriptions}) obtained. Stopping transcription.")
+                break
+
+        except Exception as e:
+            print(f"Reel {idx}: Error during transcription: {e}")
+            continue
+
+    if len(transcriptions) >= required_transcriptions:
+        combined_transcription = "\n".join(transcriptions[:required_transcriptions])
+        return combined_transcription
+    elif transcriptions:
+        # Optionally, return whatever transcriptions were obtained
+        combined_transcription = "\n".join(transcriptions)
+        print(f"Only {len(transcriptions)} transcription(s) obtained.")
+        return combined_transcription
+    else:
+        print("No successful transcriptions obtained.")
+        return None
+
 
 def analyze_influencer_content(transcription):
     prompt = (
         "Analyze the following transcription to provide:\n"
-        "1. A concise summary and simple to understand (maximum 25 words).\n"
+        "1. A concise and overall summary of the Influencer (maximum 25 words).\n"
         "2. Five relevant hashtags.\n"
         "3. Three relevant niches.\n\n"
         f"Transcription: {transcription}"
@@ -346,6 +443,13 @@ def analyze_influencer_content(transcription):
         print(f"Error during content analysis: {e}")
         return None, None, None
 
+async def main_test(reels,proxy):
+    # results = []
+    results = await extract_audio_from_reels(reels, proxy=proxy)
+    # print(results)
+    return results
+
+
 # ----------------------- Flask Routes -----------------------
 
 @app.route('/')
@@ -362,7 +466,7 @@ def detect_race_route():
 
 @app.route('/detect_analyze_video', methods=['POST'])
 def analyze_video_content():
-
+    global PROXIES
     now = time.time()
 
     data = request.get_json()
@@ -379,8 +483,13 @@ def analyze_video_content():
     if not image_urls:
         return jsonify({'error': 'No images found for this user'}), 404
 
-    results = process_reels_with_limit(reels)
+    wave_datas = asyncio.run(main_test(reels,PROXIES[0]))
+
+    results = transcribe_in_memory_wav(wave_datas,required_transcriptions=2)
+
+    openaitime=time.time()
     summary, hashtags, niches = analyze_influencer_content(results)
+    print("openai time:",time.time() - openaitime)
     collage = create_collage(image_urls, grid_size=(3, 3), image_size=(500, 500), spacing=15)
 
     # Convert collage image to base64
@@ -388,7 +497,7 @@ def analyze_video_content():
     collage.save(buffered, format="JPEG")
     collage_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-    print(time.time() - now)
+    print(f"Processing Time: {time.time() - now:.2f} seconds")
 
     return jsonify({
         'username': username,
@@ -399,6 +508,9 @@ def analyze_video_content():
     })
 
 def detect_attribute_route(attribute):
+    global clip_model, clip_processor
+    clip_model = CLIPModelSingleton.get_instance()
+    clip_processor = CLIPProcessorSingleton.get_instance()
     data = request.get_json()
     username = str(data.get('username')).replace("@","").lower()
     if not username:
